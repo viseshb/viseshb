@@ -41,5 +41,5 @@ I love building scalable AI applications, exploring LLM architectures, and optim
 
 ---
 
-📫 Feel free to connect with me on [LinkedIn](https://www.linkedin.com/in/viseshbentula) or check out my projects right here on GitHub!
+📫 Feel free to connect with me on [LinkedIn](https://www.linkedin.com/in/visesh-bentula-a8a98323b/) or check out my projects right here on GitHub!
 
