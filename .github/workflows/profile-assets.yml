@@ -37,6 +37,7 @@ jobs:
         uses: actions/github-script@v7
         env:
           PROFILE_LOGIN: ${{ github.repository_owner }}
+          PROFILE_TOKEN: ${{ secrets.PROFILE_TOKEN }}
         with:
           github-token: ${{ secrets.PROFILE_TOKEN }}
           script: |
@@ -302,15 +303,18 @@ jobs:
 
               for (let year = endYear; year >= startYear; year--) {
                 try {
-                  const response = await github.request("GET /users/{username}/contributions", {
-                    username: login,
-                    to: `${year}-12-31`,
+                  const response = await fetch(`https://github.com/users/${login}/contributions?to=${year}-12-31`, {
                     headers: {
-                      accept: "text/html"
+                      authorization: `Bearer ${process.env.PROFILE_TOKEN}`,
+                      accept: "text/html",
+                      "user-agent": "profile-assets-workflow"
                     }
                   });
+                  if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                  }
 
-                  const html = String(response.data || "");
+                  const html = await response.text();
                   const plain = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
                   const match = plain.match(/([0-9,]+)\s+contributions?\s+(?:in\s+\d{4}|in the last year)/i);
 
