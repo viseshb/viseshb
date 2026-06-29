@@ -124,64 +124,10 @@ jobs:
               return { totalCount, repos };
             }
 
-            const contributionQuery = `
-              query($login: String!, $from: DateTime!, $to: DateTime!) {
-                user(login: $login) {
-                  contributionsCollection(from: $from, to: $to) {
-                    totalCommitContributions
-                    totalIssueContributions
-                    totalPullRequestContributions
-                    totalPullRequestReviewContributions
-                    totalRepositoryContributions
-                    contributionCalendar {
-                      totalContributions
-                    }
-                  }
-                }
-              }
-            `;
-
-            async function fetchLifetimeContributions(createdAt) {
-              const totals = {
-                activity: 0,
-                commits: 0,
-                issues: 0,
-                pullRequests: 0,
-                reviews: 0,
-                repositories: 0
-              };
-
-              let cursor = new Date(createdAt);
-              while (cursor < now) {
-                const next = new Date(cursor);
-                next.setUTCFullYear(next.getUTCFullYear() + 1);
-                const to = next < now ? next : now;
-
-                const result = await github.graphql(contributionQuery, {
-                  login,
-                  from: cursor.toISOString(),
-                  to: to.toISOString()
-                });
-
-                const collection = result.user.contributionsCollection;
-                totals.activity += collection.contributionCalendar.totalContributions;
-                totals.commits += collection.totalCommitContributions;
-                totals.issues += collection.totalIssueContributions;
-                totals.pullRequests += collection.totalPullRequestContributions;
-                totals.reviews += collection.totalPullRequestReviewContributions;
-                totals.repositories += collection.totalRepositoryContributions;
-
-                cursor = to;
-              }
-
-              return totals;
-            }
-
             const user = identity.user;
-            const [publicResult, privateResult, lifetime] = await Promise.all([
+            const [publicResult, privateResult] = await Promise.all([
               fetchRepos("PUBLIC"),
-              fetchRepos("PRIVATE"),
-              fetchLifetimeContributions(user.createdAt)
+              fetchRepos("PRIVATE")
             ]);
 
             const publicRepos = publicResult.repos;
@@ -222,6 +168,28 @@ jobs:
               countWorkflowRuns(privateRepos)
             ]);
             const actionsWorkflowRuns = publicWorkflowRuns + privateWorkflowRuns;
+
+            // PR / issue / review totals via the search API. The contributions
+            // collection only counts these inside the contribution window and
+            // badly undercounts (e.g. 28 PRs vs 162 actual), so search the real
+            // totals across every repo the token can see (public + private).
+            async function searchCount(q) {
+              try {
+                const res = await github.rest.search.issuesAndPullRequests({ q, per_page: 1 });
+                return res.data.total_count || 0;
+              } catch (error) {
+                core.warning(`Could not run search "${q}": ${error.message}`);
+                return 0;
+              }
+            }
+
+            const [pullRequestsAuthored, pullRequestsMerged, issuesAuthored, reviewsGiven] =
+              await Promise.all([
+                searchCount(`is:pr author:${login}`),
+                searchCount(`is:pr author:${login} is:merged`),
+                searchCount(`is:issue author:${login}`),
+                searchCount(`is:pr reviewed-by:${login}`)
+              ]);
 
             // Calendar-year contribution totals straight from GitHub's own
             // contribution calendar (the same numbers shown on the profile).
@@ -372,12 +340,12 @@ jobs:
               ${statCard(56, 250, "Total Commits", defaultBranchCommits, "#F6C85F")}
               ${statCard(246, 250, "Public Commits", publicDefaultBranchCommits, "#2DD4BF")}
               ${statCard(436, 250, "Private Commits", privateDefaultBranchCommits, "#8B5CF6")}
-              ${statCard(626, 250, "Pull Requests", lifetime.pullRequests, "#F6C85F")}
+              ${statCard(626, 250, "Pull Requests", pullRequestsAuthored, "#F6C85F")}
 
-              ${statCard(56, 348, "Issues Opened", lifetime.issues, "#8B5CF6")}
-              ${statCard(246, 348, "Code Reviews", lifetime.reviews, "#2DD4BF")}
+              ${statCard(56, 348, "PRs Merged", pullRequestsMerged, "#8B5CF6")}
+              ${statCard(246, 348, "Code Reviews", reviewsGiven, "#2DD4BF")}
               ${statCard(436, 348, "Actions Runs", actionsWorkflowRuns, "#F6C85F")}
-              ${statCard(626, 348, "Repos Contributed", lifetime.repositories, "#2DD4BF")}
+              ${statCard(626, 348, "Issues Opened", issuesAuthored, "#2DD4BF")}
 
               ${statCard(56, 446, "Followers", user.followers.totalCount, "#2DD4BF")}
               ${statCard(246, 446, "Following", user.following.totalCount, "#8B5CF6")}
