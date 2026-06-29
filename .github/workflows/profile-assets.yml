@@ -1,0 +1,319 @@
+name: Generate profile assets
+
+on:
+  schedule:
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Verify PROFILE_TOKEN is configured
+        env:
+          PROFILE_TOKEN: ${{ secrets.PROFILE_TOKEN }}
+        run: |
+          if [ -z "$PROFILE_TOKEN" ]; then
+            echo "PROFILE_TOKEN is required for private + public GitHub stats."
+            echo "Create a classic token with repo and read:user scopes, then save it as a repository secret named PROFILE_TOKEN."
+            exit 1
+          fi
+
+      - name: Generate contribution snake
+        uses: Platane/snk/svg-only@v3
+        with:
+          github_user_name: ${{ github.repository_owner }}
+          outputs: |
+            dist/github-contribution-grid-snake.svg
+            dist/github-contribution-grid-snake-dark.svg?palette=github-dark
+
+      - name: Generate accurate GitHub metrics
+        uses: actions/github-script@v7
+        env:
+          PROFILE_LOGIN: ${{ github.repository_owner }}
+        with:
+          github-token: ${{ secrets.PROFILE_TOKEN }}
+          script: |
+            const fs = require("fs");
+            const path = require("path");
+
+            const login = process.env.PROFILE_LOGIN;
+            const now = new Date();
+
+            const identity = await github.graphql(
+              `query($login: String!) {
+                user(login: $login) {
+                  id
+                  name
+                  login
+                  createdAt
+                  followers { totalCount }
+                  following { totalCount }
+                }
+              }`,
+              { login }
+            );
+
+            const repoQuery = `
+              query($login: String!, $authorId: ID!, $privacy: RepositoryPrivacy!, $cursor: String) {
+                user(login: $login) {
+                  repositories(
+                    first: 100,
+                    after: $cursor,
+                    ownerAffiliations: OWNER,
+                    isFork: false,
+                    privacy: $privacy,
+                    orderBy: { field: UPDATED_AT, direction: DESC }
+                  ) {
+                    totalCount
+                    pageInfo {
+                      hasNextPage
+                      endCursor
+                    }
+                    nodes {
+                      name
+                      url
+                      stargazerCount
+                      forkCount
+                      updatedAt
+                      primaryLanguage {
+                        name
+                        color
+                      }
+                      defaultBranchRef {
+                        target {
+                          ... on Commit {
+                            history(author: { id: $authorId }) {
+                              totalCount
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            `;
+
+            async function fetchRepos(privacy) {
+              const repos = [];
+              let totalCount = 0;
+              let cursor = null;
+
+              do {
+                const page = await github.graphql(repoQuery, {
+                  login,
+                  authorId: identity.user.id,
+                  privacy,
+                  cursor
+                });
+
+                const connection = page.user.repositories;
+                totalCount = connection.totalCount;
+                repos.push(...connection.nodes);
+                cursor = connection.pageInfo.hasNextPage ? connection.pageInfo.endCursor : null;
+              } while (cursor);
+
+              return { totalCount, repos };
+            }
+
+            const contributionQuery = `
+              query($login: String!, $from: DateTime!, $to: DateTime!) {
+                user(login: $login) {
+                  contributionsCollection(from: $from, to: $to) {
+                    totalCommitContributions
+                    totalIssueContributions
+                    totalPullRequestContributions
+                    totalPullRequestReviewContributions
+                    totalRepositoryContributions
+                    contributionCalendar {
+                      totalContributions
+                    }
+                  }
+                }
+              }
+            `;
+
+            async function fetchLifetimeContributions(createdAt) {
+              const totals = {
+                activity: 0,
+                commits: 0,
+                issues: 0,
+                pullRequests: 0,
+                reviews: 0,
+                repositories: 0
+              };
+
+              let cursor = new Date(createdAt);
+              while (cursor < now) {
+                const next = new Date(cursor);
+                next.setUTCFullYear(next.getUTCFullYear() + 1);
+                const to = next < now ? next : now;
+
+                const result = await github.graphql(contributionQuery, {
+                  login,
+                  from: cursor.toISOString(),
+                  to: to.toISOString()
+                });
+
+                const collection = result.user.contributionsCollection;
+                totals.activity += collection.contributionCalendar.totalContributions;
+                totals.commits += collection.totalCommitContributions;
+                totals.issues += collection.totalIssueContributions;
+                totals.pullRequests += collection.totalPullRequestContributions;
+                totals.reviews += collection.totalPullRequestReviewContributions;
+                totals.repositories += collection.totalRepositoryContributions;
+
+                cursor = to;
+              }
+
+              return totals;
+            }
+
+            const user = identity.user;
+            const [publicResult, privateResult, lifetime] = await Promise.all([
+              fetchRepos("PUBLIC"),
+              fetchRepos("PRIVATE"),
+              fetchLifetimeContributions(user.createdAt)
+            ]);
+
+            const publicRepos = publicResult.repos;
+            const privateRepos = privateResult.repos;
+            const publicRepoCount = publicResult.totalCount;
+            const privateRepoCount = privateResult.totalCount;
+            const totalRepoCount = publicRepoCount + privateRepoCount;
+            const stars = publicRepos.reduce((sum, repo) => sum + repo.stargazerCount, 0);
+            const forks = publicRepos.reduce((sum, repo) => sum + repo.forkCount, 0);
+            const commitCount = (repo) => repo.defaultBranchRef?.target?.history?.totalCount || 0;
+            const publicCommits = publicRepos.reduce((sum, repo) => sum + commitCount(repo), 0);
+            const privateCommits = privateRepos.reduce((sum, repo) => sum + commitCount(repo), 0);
+            const defaultBranchCommits = publicCommits + privateCommits;
+            const recentRepos = publicRepos.slice(0, 4);
+
+            const languageMap = new Map();
+            for (const repo of [...publicRepos, ...privateRepos]) {
+              if (!repo.primaryLanguage) continue;
+              const current = languageMap.get(repo.primaryLanguage.name) || {
+                name: repo.primaryLanguage.name,
+                color: repo.primaryLanguage.color || "#2DD4BF",
+                count: 0
+              };
+              current.count += 1;
+              languageMap.set(repo.primaryLanguage.name, current);
+            }
+
+            const languages = [...languageMap.values()]
+              .sort((a, b) => b.count - a.count)
+              .slice(0, 6);
+
+            const escapeXml = (value) => String(value ?? "")
+              .replace(/&/g, "&amp;")
+              .replace(/</g, "&lt;")
+              .replace(/>/g, "&gt;")
+              .replace(/"/g, "&quot;");
+
+            const statCard = (x, y, label, value, accent) => `
+              <rect x="${x}" y="${y}" width="172" height="82" rx="16" fill="#111827" stroke="${accent}" stroke-opacity="0.45"/>
+              <text x="${x + 18}" y="${y + 32}" fill="#94A3B8" font-size="13" font-weight="600">${label}</text>
+              <text x="${x + 18}" y="${y + 62}" fill="#E6EDF3" font-size="28" font-weight="800">${value}</text>
+            `;
+
+            const repoRows = recentRepos.map((repo, index) => {
+              const y = 384 + index * 34;
+              const lang = repo.primaryLanguage ? repo.primaryLanguage.name : "Code";
+              const color = repo.primaryLanguage ? repo.primaryLanguage.color : "#2DD4BF";
+              return `
+                <g>
+                  <circle cx="458" cy="${y - 4}" r="5" fill="${color || "#2DD4BF"}"/>
+                  <text x="472" y="${y}" fill="#E6EDF3" font-size="14" font-weight="700">${escapeXml(repo.name)}</text>
+                  <text x="650" y="${y}" fill="#94A3B8" font-size="12">${escapeXml(lang)}</text>
+                  <text x="735" y="${y}" fill="#F6C85F" font-size="12">stars ${repo.stargazerCount}</text>
+                </g>
+              `;
+            }).join("");
+
+            const languageRows = languages.map((language, index) => {
+              const total = languages.reduce((sum, item) => sum + item.count, 0) || 1;
+              const percent = Math.round((language.count / total) * 100);
+              const y = 370 + index * 31;
+              return `
+                <g>
+                  <text x="56" y="${y}" fill="#E6EDF3" font-size="14" font-weight="700">${escapeXml(language.name)}</text>
+                  <text x="202" y="${y}" fill="#94A3B8" font-size="12">${percent}%</text>
+                  <rect x="250" y="${y - 12}" width="130" height="10" rx="5" fill="#1F2937"/>
+                  <rect x="250" y="${y - 12}" width="${Math.max(8, Math.round(130 * percent / 100))}" height="10" rx="5" fill="${language.color}"/>
+                </g>
+              `;
+            }).join("");
+
+            const svg = `<?xml version="1.0" encoding="UTF-8"?>
+            <svg width="900" height="820" viewBox="0 0 900 820" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+              <title id="title">${escapeXml(login)} GitHub metrics</title>
+              <desc id="desc">Dynamic GitHub metrics generated from the GitHub API.</desc>
+              <defs>
+                <linearGradient id="border" x1="0" y1="0" x2="900" y2="820" gradientUnits="userSpaceOnUse">
+                  <stop stop-color="#F6C85F"/>
+                  <stop offset="0.52" stop-color="#2DD4BF"/>
+                  <stop offset="1" stop-color="#8B5CF6"/>
+                </linearGradient>
+                <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+                  <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#000000" flood-opacity="0.35"/>
+                </filter>
+              </defs>
+              <rect width="900" height="820" rx="28" fill="#0D1117"/>
+              <rect x="1" y="1" width="898" height="818" rx="27" stroke="url(#border)" stroke-width="2"/>
+              <g filter="url(#shadow)">
+                <rect x="34" y="34" width="832" height="752" rx="24" fill="#0B1020" stroke="#1F2937"/>
+              </g>
+              <text x="56" y="86" fill="#F6C85F" font-size="30" font-weight="900">${escapeXml(user.name || login)}</text>
+              <text x="56" y="116" fill="#94A3B8" font-size="15">@${escapeXml(login)} - Live GitHub analytics - Updated by GitHub Actions</text>
+
+              ${statCard(56, 152, "Total Repos", totalRepoCount, "#F6C85F")}
+              ${statCard(246, 152, "Public Repos", publicRepoCount, "#2DD4BF")}
+              ${statCard(436, 152, "Private Repos", privateRepoCount, "#8B5CF6")}
+              ${statCard(626, 152, "Lifetime Commits", lifetime.commits, "#F6C85F")}
+
+              ${statCard(56, 250, "Public Repo Commits", publicCommits, "#2DD4BF")}
+              ${statCard(246, 250, "Private Repo Commits", privateCommits, "#8B5CF6")}
+              ${statCard(436, 250, "Default Branch Commits", defaultBranchCommits, "#F6C85F")}
+              ${statCard(626, 250, "Lifetime Activity", lifetime.activity, "#2DD4BF")}
+
+              ${statCard(56, 348, "Lifetime PRs", lifetime.pullRequests, "#8B5CF6")}
+              ${statCard(246, 348, "Lifetime Issues", lifetime.issues, "#2DD4BF")}
+              ${statCard(436, 348, "Lifetime Reviews", lifetime.reviews, "#F6C85F")}
+              ${statCard(626, 348, "Repos Created", lifetime.repositories, "#2DD4BF")}
+
+              ${statCard(56, 446, "Followers", user.followers.totalCount, "#2DD4BF")}
+              ${statCard(246, 446, "Following", user.following.totalCount, "#8B5CF6")}
+              ${statCard(436, 446, "Public Stars", stars, "#F6C85F")}
+              ${statCard(626, 446, "Public Forks", forks, "#2DD4BF")}
+
+              <text x="56" y="548" fill="#F6C85F" font-size="19" font-weight="900">Primary Languages Across Public + Private</text>
+              <g transform="translate(0 218)">
+                ${languageRows || `<text x="56" y="370" fill="#94A3B8" font-size="14">No primary languages detected yet.</text>`}
+              </g>
+
+              <text x="456" y="548" fill="#F6C85F" font-size="19" font-weight="900">Recently Updated Public Repos</text>
+              <g transform="translate(0 218)">
+                ${repoRows || `<text x="456" y="370" fill="#94A3B8" font-size="14">No public repositories found yet.</text>`}
+              </g>
+
+              <text x="56" y="758" fill="#64748B" font-size="12">Lifetime totals run from account creation through today. Private repos count only toward aggregate totals; private repo names are never shown.</text>
+              <text x="56" y="776" fill="#64748B" font-size="12">Repo commit counts are authored commits on accessible default branches. GitHub contribution commits use the full lifetime contribution API.</text>
+            </svg>`;
+
+            fs.mkdirSync("dist", { recursive: true });
+            fs.writeFileSync(path.join("dist", "github-metrics.svg"), svg.trim());
+
+      - name: Publish generated assets to output branch
+        uses: crazy-max/ghaction-github-pages@v4
+        with:
+          target_branch: output
+          build_dir: dist
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
