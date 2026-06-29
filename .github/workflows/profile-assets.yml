@@ -197,104 +197,31 @@ jobs:
             const defaultBranchCommits = publicDefaultBranchCommits + privateDefaultBranchCommits;
             const recentRepos = publicRepos.slice(0, 4);
 
-            async function countAllBranchAuthoredCommits(repos) {
-              const repoCounts = new Map();
-
+            // Total Actions workflow runs across every owned repo. This is the
+            // only stat that still needs the REST API; commit/PR/issue counts now
+            // come from GitHub's own contribution data (reliable + consistent).
+            async function countWorkflowRuns(repos) {
+              let runs = 0;
               for (const repo of repos) {
-                const commits = new Set();
-
-                try {
-                  const branches = await github.paginate(github.rest.repos.listBranches, {
-                    owner: login,
-                    repo: repo.name,
-                    per_page: 100
-                  });
-
-                  for (const branch of branches) {
-                    const branchCommits = await github.paginate(github.rest.repos.listCommits, {
-                      owner: login,
-                      repo: repo.name,
-                      sha: branch.name,
-                      author: login,
-                      per_page: 100
-                    });
-
-                    for (const commit of branchCommits) {
-                      commits.add(commit.sha);
-                    }
-                  }
-                } catch (error) {
-                  core.warning(`Could not count all branch commits for one repository: ${error.message}`);
-                }
-
-                repoCounts.set(repo.name, commits.size);
-              }
-
-              return [...repoCounts.values()].reduce((sum, count) => sum + count, 0);
-            }
-
-            const [publicAllBranchCommits, privateAllBranchCommits] = await Promise.all([
-              countAllBranchAuthoredCommits(publicRepos),
-              countAllBranchAuthoredCommits(privateRepos)
-            ]);
-            const allBranchCommits = publicAllBranchCommits + privateAllBranchCommits;
-
-            async function countRepoActivityAndWorkflows(repos) {
-              const totals = {
-                pullRequests: 0,
-                issues: 0,
-                workflowRuns: 0
-              };
-
-              for (const repo of repos) {
-                try {
-                  const pulls = await github.paginate(github.rest.pulls.list, {
-                    owner: login,
-                    repo: repo.name,
-                    state: "all",
-                    per_page: 100
-                  });
-                  totals.pullRequests += pulls.length;
-                } catch (error) {
-                  core.warning(`Could not count pull requests for one repository: ${error.message}`);
-                }
-
-                try {
-                  const issues = await github.paginate(github.rest.issues.listForRepo, {
-                    owner: login,
-                    repo: repo.name,
-                    state: "all",
-                    per_page: 100
-                  });
-                  totals.issues += issues.filter((issue) =>
-                    !issue.pull_request
-                  ).length;
-                } catch (error) {
-                  core.warning(`Could not count issues for one repository: ${error.message}`);
-                }
-
                 try {
                   const workflowRuns = await github.rest.actions.listWorkflowRunsForRepo({
                     owner: login,
                     repo: repo.name,
                     per_page: 1
                   });
-                  totals.workflowRuns += workflowRuns.data.total_count || 0;
+                  runs += workflowRuns.data.total_count || 0;
                 } catch (error) {
                   core.warning(`Could not count Actions workflow runs for one repository: ${error.message}`);
                 }
               }
-
-              return totals;
+              return runs;
             }
 
-            const [publicRepoActivity, privateRepoActivity] = await Promise.all([
-              countRepoActivityAndWorkflows(publicRepos),
-              countRepoActivityAndWorkflows(privateRepos)
+            const [publicWorkflowRuns, privateWorkflowRuns] = await Promise.all([
+              countWorkflowRuns(publicRepos),
+              countWorkflowRuns(privateRepos)
             ]);
-            const repoPullRequests = publicRepoActivity.pullRequests + privateRepoActivity.pullRequests;
-            const repoIssues = publicRepoActivity.issues + privateRepoActivity.issues;
-            const actionsWorkflowRuns = publicRepoActivity.workflowRuns + privateRepoActivity.workflowRuns;
+            const actionsWorkflowRuns = publicWorkflowRuns + privateWorkflowRuns;
 
             // Calendar-year contribution totals straight from GitHub's own
             // contribution calendar (the same numbers shown on the profile).
@@ -440,17 +367,17 @@ jobs:
               ${statCard(56, 152, "Total Repos", totalRepoCount, "#F6C85F")}
               ${statCard(246, 152, "Public Repos", publicRepoCount, "#2DD4BF")}
               ${statCard(436, 152, "Private Repos", privateRepoCount, "#8B5CF6")}
-              ${statCard(626, 152, "All Branch Commits", allBranchCommits, "#F6C85F")}
+              ${statCard(626, 152, "Total Contributions", dynamicContributionTotal, "#2DD4BF")}
 
-              ${statCard(56, 250, "Public Commits", publicAllBranchCommits, "#2DD4BF")}
-              ${statCard(246, 250, "Private Commits", privateAllBranchCommits, "#8B5CF6")}
-              ${statCard(436, 250, "Default Branch Commits", defaultBranchCommits, "#F6C85F")}
-              ${statCard(626, 250, "Total Contributions", dynamicContributionTotal, "#2DD4BF")}
+              ${statCard(56, 250, "Total Commits", defaultBranchCommits, "#F6C85F")}
+              ${statCard(246, 250, "Public Commits", publicDefaultBranchCommits, "#2DD4BF")}
+              ${statCard(436, 250, "Private Commits", privateDefaultBranchCommits, "#8B5CF6")}
+              ${statCard(626, 250, "Pull Requests", lifetime.pullRequests, "#F6C85F")}
 
-              ${statCard(56, 348, "Repo PRs", repoPullRequests, "#8B5CF6")}
-              ${statCard(246, 348, "Repo Issues", repoIssues, "#2DD4BF")}
+              ${statCard(56, 348, "Issues Opened", lifetime.issues, "#8B5CF6")}
+              ${statCard(246, 348, "Code Reviews", lifetime.reviews, "#2DD4BF")}
               ${statCard(436, 348, "Actions Runs", actionsWorkflowRuns, "#F6C85F")}
-              ${statCard(626, 348, "Repos Created", lifetime.repositories, "#2DD4BF")}
+              ${statCard(626, 348, "Repos Contributed", lifetime.repositories, "#2DD4BF")}
 
               ${statCard(56, 446, "Followers", user.followers.totalCount, "#2DD4BF")}
               ${statCard(246, 446, "Following", user.following.totalCount, "#8B5CF6")}
@@ -468,82 +395,89 @@ jobs:
               </g>
 
               <text x="56" y="758" fill="#64748B" font-size="12">Dynamic profile years: ${escapeXml(contributionYearLabel)}. Private repo names are never shown.</text>
-              <text x="56" y="776" fill="#64748B" font-size="12">Commit, PR, issue, and Actions run totals scan every accessible public and private owned repo without rendering private repo names.</text>
+              <text x="56" y="776" fill="#64748B" font-size="12">Commit, PR, issue, and contribution totals come from GitHub's own data across public and private repos, without rendering private repo names.</text>
             </svg>`;
 
             fs.mkdirSync("dist", { recursive: true });
             fs.writeFileSync(path.join("dist", "github-metrics.svg"), svg.trim());
 
             // ---- Full-history contribution graph (account start year -> now) ----
-            // Monthly contribution totals, dynamically spanning every year since
-            // the account was created. No values are hardcoded.
+            // Monthly contributions across every year since the account was
+            // created. Leading empty months are trimmed and a square-root y-scale
+            // lifts the smaller years so the curve is readable instead of a long
+            // flat gap. All values are dynamic; nothing is hardcoded.
             const startYear = new Date(user.createdAt).getUTCFullYear();
+            const endYear = now.getUTCFullYear();
             const monthMap = new Map();
             for (const day of calendarDays) {
               const key = day.date.slice(0, 7);
               monthMap.set(key, (monthMap.get(key) || 0) + day.count);
             }
 
-            const months = [];
+            let months = [];
             {
               let y = startYear;
               let m = 0;
-              const endY = now.getUTCFullYear();
               const endM = now.getUTCMonth();
-              while (y < endY || (y === endY && m <= endM)) {
+              while (y < endYear || (y === endYear && m <= endM)) {
                 const key = `${y}-${String(m + 1).padStart(2, "0")}`;
                 months.push({ key, count: monthMap.get(key) || 0, y, m });
                 m += 1;
                 if (m > 11) { m = 0; y += 1; }
               }
             }
+            const firstActive = months.findIndex((item) => item.count > 0);
+            if (firstActive > 0) months = months.slice(firstActive);
 
-            const endYear = now.getUTCFullYear();
             const GW = 900, GH = 320;
-            const gPadL = 56, gPadR = 28, gPadT = 64, gPadB = 54;
+            const gPadL = 52, gPadR = 28, gPadT = 70, gPadB = 50;
             const plotW = GW - gPadL - gPadR;
             const plotH = GH - gPadT - gPadB;
+            const baseY = gPadT + plotH;
             const maxCount = Math.max(1, ...months.map((item) => item.count));
+            const sq = (v) => Math.sqrt(Math.max(0, v));
+            const sqMax = sq(maxCount);
             const nMonths = months.length;
             const xAt = (i) => gPadL + (nMonths <= 1 ? plotW / 2 : (i / (nMonths - 1)) * plotW);
-            const yAt = (c) => gPadT + plotH - (c / maxCount) * plotH;
+            const yAt = (c) => baseY - (sq(c) / sqMax) * plotH;
+
+            const ySteps = 4;
+            let gridLines = "";
+            for (let i = 0; i <= ySteps; i++) {
+              const frac = i / ySteps;
+              const val = Math.round(maxCount * frac * frac);
+              const yy = baseY - frac * plotH;
+              gridLines += `<line x1="${gPadL}" y1="${yy.toFixed(1)}" x2="${GW - gPadR}" y2="${yy.toFixed(1)}" stroke="#1F2937" stroke-width="1"/>`
+                + `<text x="${gPadL - 9}" y="${(yy + 4).toFixed(1)}" fill="#64748B" font-size="11" text-anchor="end">${val}</text>`;
+            }
 
             const linePoints = months.map((item, i) => [xAt(i), yAt(item.count)]);
             const linePath = linePoints
               .map((p, i) => `${i === 0 ? "M" : "L"}${p[0].toFixed(1)},${p[1].toFixed(1)}`)
               .join(" ");
-            const areaPath = `${linePath} L${xAt(nMonths - 1).toFixed(1)},${(gPadT + plotH).toFixed(1)} L${xAt(0).toFixed(1)},${(gPadT + plotH).toFixed(1)} Z`;
-
-            const ySteps = 4;
-            let gridLines = "";
-            for (let i = 0; i <= ySteps; i++) {
-              const val = Math.round((maxCount * i) / ySteps);
-              const yy = gPadT + plotH - (i / ySteps) * plotH;
-              gridLines += `<line x1="${gPadL}" y1="${yy.toFixed(1)}" x2="${GW - gPadR}" y2="${yy.toFixed(1)}" stroke="#1F2937" stroke-width="1"/>
-              <text x="${gPadL - 10}" y="${(yy + 4).toFixed(1)}" fill="#64748B" font-size="11" text-anchor="end">${val}</text>`;
-            }
+            const areaPath = `${linePath} L${xAt(nMonths - 1).toFixed(1)},${baseY.toFixed(1)} L${xAt(0).toFixed(1)},${baseY.toFixed(1)} Z`;
 
             let xLabels = "";
             months.forEach((item, i) => {
               if (item.m === 0 || i === 0) {
-                xLabels += `<text x="${xAt(i).toFixed(1)}" y="${(GH - gPadB + 22).toFixed(1)}" fill="#94A3B8" font-size="12" font-weight="700" text-anchor="middle">${item.y}</text>`;
+                xLabels += `<text x="${xAt(i).toFixed(1)}" y="${(baseY + 24).toFixed(1)}" fill="#94A3B8" font-size="12" font-weight="700" text-anchor="middle">${item.y}</text>`;
               }
             });
 
             const graphYearLabel = [...calendarYears]
               .sort((a, b) => b.year - a.year)
-              .map(({ year, count }) => `${year}: ${count}`)
+              .map(({ year, count }) => `${year}: ${count.toLocaleString("en-US")}`)
               .join("   |   ");
             const dots = linePoints
-              .map((p) => `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="2.4" fill="#2DD4BF"/>`)
+              .map((p) => `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="2.2" fill="#2DD4BF"/>`)
               .join("");
 
             const graphSvg = `<?xml version="1.0" encoding="UTF-8"?>
             <svg width="${GW}" height="${GH}" viewBox="0 0 ${GW} ${GH}" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Contribution history">
               <defs>
-                <linearGradient id="graphArea" x1="0" y1="${gPadT}" x2="0" y2="${gPadT + plotH}" gradientUnits="userSpaceOnUse">
+                <linearGradient id="graphArea" x1="0" y1="${gPadT}" x2="0" y2="${baseY}" gradientUnits="userSpaceOnUse">
                   <stop stop-color="#F6C85F" stop-opacity="0.55"/>
-                  <stop offset="1" stop-color="#F6C85F" stop-opacity="0.02"/>
+                  <stop offset="1" stop-color="#F6C85F" stop-opacity="0.03"/>
                 </linearGradient>
                 <linearGradient id="graphBorder" x1="0" y1="0" x2="${GW}" y2="${GH}" gradientUnits="userSpaceOnUse">
                   <stop stop-color="#F6C85F"/>
@@ -554,12 +488,13 @@ jobs:
               <rect width="${GW}" height="${GH}" rx="20" fill="#0D1117"/>
               <rect x="1" y="1" width="${GW - 2}" height="${GH - 2}" rx="19" stroke="url(#graphBorder)" stroke-width="2" stroke-opacity="0.7"/>
               <text x="${gPadL}" y="34" fill="#F6C85F" font-size="20" font-weight="900">Contribution History - ${startYear} to ${endYear}</text>
-              <text x="${gPadL}" y="54" fill="#94A3B8" font-size="12.5">${escapeXml(graphYearLabel)}   ·   Total: ${dynamicContributionTotal} contributions</text>
+              <text x="${gPadL}" y="55" fill="#94A3B8" font-size="12.5">${escapeXml(graphYearLabel)}   ·   Total: ${dynamicContributionTotal.toLocaleString("en-US")}</text>
               ${gridLines}
               <path d="${areaPath}" fill="url(#graphArea)"/>
-              <path d="${linePath}" fill="none" stroke="#F6C85F" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>
+              <path d="${linePath}" fill="none" stroke="#F6C85F" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/>
               ${dots}
               ${xLabels}
+              <text x="${GW - gPadR}" y="${(gPadT - 14).toFixed(1)}" fill="#475569" font-size="10.5" text-anchor="end">monthly · sqrt scale</text>
             </svg>`;
 
             fs.writeFileSync(path.join("dist", "github-contribution-graph.svg"), graphSvg.trim());
