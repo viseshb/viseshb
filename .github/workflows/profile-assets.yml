@@ -296,55 +296,66 @@ jobs:
             const repoIssues = publicRepoActivity.issues + privateRepoActivity.issues;
             const actionsWorkflowRuns = publicRepoActivity.workflowRuns + privateRepoActivity.workflowRuns;
 
-            async function fetchProfileContributionYears(createdAt) {
+            // Calendar-year contribution totals straight from GitHub's own
+            // contribution calendar (the same numbers shown on the profile).
+            // Requires "Include private contributions on my profile" so private
+            // squares are counted; repository names are never exposed by this API.
+            const calendarYearQuery = `
+              query($login: String!, $from: DateTime!, $to: DateTime!) {
+                user(login: $login) {
+                  contributionsCollection(from: $from, to: $to) {
+                    contributionCalendar {
+                      totalContributions
+                      weeks {
+                        contributionDays {
+                          date
+                          contributionCount
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            `;
+
+            async function fetchCalendarYears(createdAt) {
               const startYear = new Date(createdAt).getUTCFullYear();
               const endYear = now.getUTCFullYear();
-              const yearly = [];
+              const years = [];
+              const days = [];
 
-              for (let year = endYear; year >= startYear; year--) {
+              for (let year = startYear; year <= endYear; year++) {
+                const from = new Date(Date.UTC(year, 0, 1, 0, 0, 0));
+                const toRaw = new Date(Date.UTC(year, 11, 31, 23, 59, 59));
+                const to = toRaw < now ? toRaw : now;
+
                 try {
-                  const response = await fetch(`https://github.com/users/${login}/contributions?to=${year}-12-31`, {
-                    headers: {
-                      authorization: `Bearer ${process.env.PROFILE_TOKEN}`,
-                      accept: "text/html",
-                      "user-agent": "profile-assets-workflow"
+                  const data = await github.graphql(calendarYearQuery, {
+                    login,
+                    from: from.toISOString(),
+                    to: to.toISOString()
+                  });
+                  const cal = data.user.contributionsCollection.contributionCalendar;
+                  years.push({ year, count: cal.totalContributions });
+                  for (const week of cal.weeks) {
+                    for (const day of week.contributionDays) {
+                      days.push({ date: day.date, count: day.contributionCount });
                     }
-                  });
-                  if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}`);
                   }
-
-                  const html = await response.text();
-                  const plain = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
-                  const match = plain.match(/([0-9,]+)\s+contributions?\s+(?:in\s+\d{4}|in the last year)/i);
-
-                  yearly.push({
-                    year,
-                    count: match ? Number(match[1].replace(/,/g, "")) : 0
-                  });
                 } catch (error) {
-                  core.warning(`Could not fetch profile contribution year ${year}: ${error.message}`);
-                  yearly.push({ year, count: 0 });
+                  core.warning(`Could not fetch contribution calendar year ${year}: ${error.message}`);
+                  years.push({ year, count: 0 });
                 }
               }
 
-              return yearly;
+              return { years, days };
             }
 
-            const profileContributionYears = await fetchProfileContributionYears(user.createdAt);
-            const profileContributionTotal = profileContributionYears
+            const { years: calendarYears, days: calendarDays } = await fetchCalendarYears(user.createdAt);
+            const dynamicContributionTotal = calendarYears
               .reduce((sum, item) => sum + item.count, 0);
-            const repoScannedContributionTotal = allBranchCommits
-              + repoPullRequests
-              + repoIssues
-              + lifetime.reviews
-              + lifetime.repositories;
-            const dynamicContributionTotal = Math.max(
-              profileContributionTotal,
-              repoScannedContributionTotal,
-              lifetime.activity
-            );
-            const contributionYearLabel = profileContributionYears
+            const contributionYearLabel = [...calendarYears]
+              .sort((a, b) => b.year - a.year)
               .map(({ year, count }) => `${year}: ${count}`)
               .join(" | ");
 
@@ -462,6 +473,96 @@ jobs:
 
             fs.mkdirSync("dist", { recursive: true });
             fs.writeFileSync(path.join("dist", "github-metrics.svg"), svg.trim());
+
+            // ---- Full-history contribution graph (account start year -> now) ----
+            // Monthly contribution totals, dynamically spanning every year since
+            // the account was created. No values are hardcoded.
+            const startYear = new Date(user.createdAt).getUTCFullYear();
+            const monthMap = new Map();
+            for (const day of calendarDays) {
+              const key = day.date.slice(0, 7);
+              monthMap.set(key, (monthMap.get(key) || 0) + day.count);
+            }
+
+            const months = [];
+            {
+              let y = startYear;
+              let m = 0;
+              const endY = now.getUTCFullYear();
+              const endM = now.getUTCMonth();
+              while (y < endY || (y === endY && m <= endM)) {
+                const key = `${y}-${String(m + 1).padStart(2, "0")}`;
+                months.push({ key, count: monthMap.get(key) || 0, y, m });
+                m += 1;
+                if (m > 11) { m = 0; y += 1; }
+              }
+            }
+
+            const endYear = now.getUTCFullYear();
+            const GW = 900, GH = 320;
+            const gPadL = 56, gPadR = 28, gPadT = 64, gPadB = 54;
+            const plotW = GW - gPadL - gPadR;
+            const plotH = GH - gPadT - gPadB;
+            const maxCount = Math.max(1, ...months.map((item) => item.count));
+            const nMonths = months.length;
+            const xAt = (i) => gPadL + (nMonths <= 1 ? plotW / 2 : (i / (nMonths - 1)) * plotW);
+            const yAt = (c) => gPadT + plotH - (c / maxCount) * plotH;
+
+            const linePoints = months.map((item, i) => [xAt(i), yAt(item.count)]);
+            const linePath = linePoints
+              .map((p, i) => `${i === 0 ? "M" : "L"}${p[0].toFixed(1)},${p[1].toFixed(1)}`)
+              .join(" ");
+            const areaPath = `${linePath} L${xAt(nMonths - 1).toFixed(1)},${(gPadT + plotH).toFixed(1)} L${xAt(0).toFixed(1)},${(gPadT + plotH).toFixed(1)} Z`;
+
+            const ySteps = 4;
+            let gridLines = "";
+            for (let i = 0; i <= ySteps; i++) {
+              const val = Math.round((maxCount * i) / ySteps);
+              const yy = gPadT + plotH - (i / ySteps) * plotH;
+              gridLines += `<line x1="${gPadL}" y1="${yy.toFixed(1)}" x2="${GW - gPadR}" y2="${yy.toFixed(1)}" stroke="#1F2937" stroke-width="1"/>
+              <text x="${gPadL - 10}" y="${(yy + 4).toFixed(1)}" fill="#64748B" font-size="11" text-anchor="end">${val}</text>`;
+            }
+
+            let xLabels = "";
+            months.forEach((item, i) => {
+              if (item.m === 0 || i === 0) {
+                xLabels += `<text x="${xAt(i).toFixed(1)}" y="${(GH - gPadB + 22).toFixed(1)}" fill="#94A3B8" font-size="12" font-weight="700" text-anchor="middle">${item.y}</text>`;
+              }
+            });
+
+            const graphYearLabel = [...calendarYears]
+              .sort((a, b) => b.year - a.year)
+              .map(({ year, count }) => `${year}: ${count}`)
+              .join("   |   ");
+            const dots = linePoints
+              .map((p) => `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="2.4" fill="#2DD4BF"/>`)
+              .join("");
+
+            const graphSvg = `<?xml version="1.0" encoding="UTF-8"?>
+            <svg width="${GW}" height="${GH}" viewBox="0 0 ${GW} ${GH}" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Contribution history">
+              <defs>
+                <linearGradient id="graphArea" x1="0" y1="${gPadT}" x2="0" y2="${gPadT + plotH}" gradientUnits="userSpaceOnUse">
+                  <stop stop-color="#F6C85F" stop-opacity="0.55"/>
+                  <stop offset="1" stop-color="#F6C85F" stop-opacity="0.02"/>
+                </linearGradient>
+                <linearGradient id="graphBorder" x1="0" y1="0" x2="${GW}" y2="${GH}" gradientUnits="userSpaceOnUse">
+                  <stop stop-color="#F6C85F"/>
+                  <stop offset="0.52" stop-color="#2DD4BF"/>
+                  <stop offset="1" stop-color="#8B5CF6"/>
+                </linearGradient>
+              </defs>
+              <rect width="${GW}" height="${GH}" rx="20" fill="#0D1117"/>
+              <rect x="1" y="1" width="${GW - 2}" height="${GH - 2}" rx="19" stroke="url(#graphBorder)" stroke-width="2" stroke-opacity="0.7"/>
+              <text x="${gPadL}" y="34" fill="#F6C85F" font-size="20" font-weight="900">Contribution History - ${startYear} to ${endYear}</text>
+              <text x="${gPadL}" y="54" fill="#94A3B8" font-size="12.5">${escapeXml(graphYearLabel)}   ·   Total: ${dynamicContributionTotal} contributions</text>
+              ${gridLines}
+              <path d="${areaPath}" fill="url(#graphArea)"/>
+              <path d="${linePath}" fill="none" stroke="#F6C85F" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>
+              ${dots}
+              ${xLabels}
+            </svg>`;
+
+            fs.writeFileSync(path.join("dist", "github-contribution-graph.svg"), graphSvg.trim());
 
       - name: Publish generated assets to output branch
         uses: crazy-max/ghaction-github-pages@v4
