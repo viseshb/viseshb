@@ -77,8 +77,8 @@ I enjoy working on agentic AI systems, LLM orchestration, and distributed backen
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/viseshb/viseshb/output/github-metrics.svg" />
-  <img alt="Visesh's live public and private GitHub metrics without private repository names" src="https://raw.githubusercontent.com/viseshb/viseshb/output/github-metrics.svg" width="100%" />
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/viseshb/viseshb/output/github-metrics.svg?v=20260629-3" />
+  <img alt="Visesh's live public and private GitHub metrics without private repository names" src="https://raw.githubusercontent.com/viseshb/viseshb/output/github-metrics.svg?v=20260629-3" width="100%" />
 </picture>
 
 </div>

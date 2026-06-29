@@ -295,6 +295,55 @@ jobs:
             const repoIssues = publicRepoActivity.issues + privateRepoActivity.issues;
             const actionsWorkflowRuns = publicRepoActivity.workflowRuns + privateRepoActivity.workflowRuns;
 
+            async function fetchProfileContributionYears(createdAt) {
+              const startYear = new Date(createdAt).getUTCFullYear();
+              const endYear = now.getUTCFullYear();
+              const yearly = [];
+
+              for (let year = endYear; year >= startYear; year--) {
+                try {
+                  const response = await github.request("GET /users/{username}/contributions", {
+                    username: login,
+                    to: `${year}-12-31`,
+                    headers: {
+                      accept: "text/html"
+                    }
+                  });
+
+                  const html = String(response.data || "");
+                  const plain = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+                  const match = plain.match(/([0-9,]+)\s+contributions?\s+(?:in\s+\d{4}|in the last year)/i);
+
+                  yearly.push({
+                    year,
+                    count: match ? Number(match[1].replace(/,/g, "")) : 0
+                  });
+                } catch (error) {
+                  core.warning(`Could not fetch profile contribution year ${year}: ${error.message}`);
+                  yearly.push({ year, count: 0 });
+                }
+              }
+
+              return yearly;
+            }
+
+            const profileContributionYears = await fetchProfileContributionYears(user.createdAt);
+            const profileContributionTotal = profileContributionYears
+              .reduce((sum, item) => sum + item.count, 0);
+            const repoScannedContributionTotal = allBranchCommits
+              + repoPullRequests
+              + repoIssues
+              + lifetime.reviews
+              + lifetime.repositories;
+            const dynamicContributionTotal = Math.max(
+              profileContributionTotal,
+              repoScannedContributionTotal,
+              lifetime.activity
+            );
+            const contributionYearLabel = profileContributionYears
+              .map(({ year, count }) => `${year}: ${count}`)
+              .join(" | ");
+
             const languageMap = new Map();
             for (const repo of [...publicRepos, ...privateRepos]) {
               if (!repo.primaryLanguage) continue;
@@ -381,7 +430,7 @@ jobs:
               ${statCard(56, 250, "Public Commits", publicAllBranchCommits, "#2DD4BF")}
               ${statCard(246, 250, "Private Commits", privateAllBranchCommits, "#8B5CF6")}
               ${statCard(436, 250, "Default Branch Commits", defaultBranchCommits, "#F6C85F")}
-              ${statCard(626, 250, "Profile API Activity", lifetime.activity, "#2DD4BF")}
+              ${statCard(626, 250, "Total Contributions", dynamicContributionTotal, "#2DD4BF")}
 
               ${statCard(56, 348, "Repo PRs", repoPullRequests, "#8B5CF6")}
               ${statCard(246, 348, "Repo Issues", repoIssues, "#2DD4BF")}
@@ -403,7 +452,7 @@ jobs:
                 ${repoRows || `<text x="456" y="370" fill="#94A3B8" font-size="14">No public repositories found yet.</text>`}
               </g>
 
-              <text x="56" y="758" fill="#64748B" font-size="12">Lifetime totals run from account creation through today. Private repos count only toward aggregate totals; private repo names are never shown.</text>
+              <text x="56" y="758" fill="#64748B" font-size="12">Dynamic profile years: ${escapeXml(contributionYearLabel)}. Private repo names are never shown.</text>
               <text x="56" y="776" fill="#64748B" font-size="12">Commit, PR, issue, and Actions run totals scan every accessible public and private owned repo without rendering private repo names.</text>
             </svg>`;
 
