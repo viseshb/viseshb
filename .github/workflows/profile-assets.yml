@@ -242,9 +242,8 @@ jobs:
               const totals = {
                 pullRequests: 0,
                 issues: 0,
-                workflows: 0
+                workflowRuns: 0
               };
-              const normalizedLogin = login.toLowerCase();
 
               for (const repo of repos) {
                 try {
@@ -254,9 +253,7 @@ jobs:
                     state: "all",
                     per_page: 100
                   });
-                  totals.pullRequests += pulls.filter((pull) =>
-                    pull.user?.login?.toLowerCase() === normalizedLogin
-                  ).length;
+                  totals.pullRequests += pulls.length;
                 } catch (error) {
                   core.warning(`Could not count pull requests for one repository: ${error.message}`);
                 }
@@ -266,25 +263,24 @@ jobs:
                     owner: login,
                     repo: repo.name,
                     state: "all",
-                    creator: login,
                     per_page: 100
                   });
                   totals.issues += issues.filter((issue) =>
-                    !issue.pull_request && issue.user?.login?.toLowerCase() === normalizedLogin
+                    !issue.pull_request
                   ).length;
                 } catch (error) {
                   core.warning(`Could not count issues for one repository: ${error.message}`);
                 }
 
                 try {
-                  const workflows = await github.paginate(github.rest.actions.listRepoWorkflows, {
+                  const workflowRuns = await github.rest.actions.listWorkflowRunsForRepo({
                     owner: login,
                     repo: repo.name,
-                    per_page: 100
+                    per_page: 1
                   });
-                  totals.workflows += workflows.length;
+                  totals.workflowRuns += workflowRuns.data.total_count || 0;
                 } catch (error) {
-                  core.warning(`Could not count Actions workflows for one repository: ${error.message}`);
+                  core.warning(`Could not count Actions workflow runs for one repository: ${error.message}`);
                 }
               }
 
@@ -297,7 +293,7 @@ jobs:
             ]);
             const repoPullRequests = publicRepoActivity.pullRequests + privateRepoActivity.pullRequests;
             const repoIssues = publicRepoActivity.issues + privateRepoActivity.issues;
-            const actionsWorkflows = publicRepoActivity.workflows + privateRepoActivity.workflows;
+            const actionsWorkflowRuns = publicRepoActivity.workflowRuns + privateRepoActivity.workflowRuns;
 
             const languageMap = new Map();
             for (const repo of [...publicRepos, ...privateRepos]) {
@@ -387,9 +383,9 @@ jobs:
               ${statCard(436, 250, "Default Branch Commits", defaultBranchCommits, "#F6C85F")}
               ${statCard(626, 250, "Profile API Activity", lifetime.activity, "#2DD4BF")}
 
-              ${statCard(56, 348, "Owned Repo PRs", repoPullRequests, "#8B5CF6")}
-              ${statCard(246, 348, "Owned Issues", repoIssues, "#2DD4BF")}
-              ${statCard(436, 348, "Actions Workflows", actionsWorkflows, "#F6C85F")}
+              ${statCard(56, 348, "Repo PRs", repoPullRequests, "#8B5CF6")}
+              ${statCard(246, 348, "Repo Issues", repoIssues, "#2DD4BF")}
+              ${statCard(436, 348, "Actions Runs", actionsWorkflowRuns, "#F6C85F")}
               ${statCard(626, 348, "Repos Created", lifetime.repositories, "#2DD4BF")}
 
               ${statCard(56, 446, "Followers", user.followers.totalCount, "#2DD4BF")}
@@ -408,7 +404,7 @@ jobs:
               </g>
 
               <text x="56" y="758" fill="#64748B" font-size="12">Lifetime totals run from account creation through today. Private repos count only toward aggregate totals; private repo names are never shown.</text>
-              <text x="56" y="776" fill="#64748B" font-size="12">Commit, PR, issue, and workflow totals scan every accessible public and private owned repo without rendering private repo names.</text>
+              <text x="56" y="776" fill="#64748B" font-size="12">Commit, PR, issue, and Actions run totals scan every accessible public and private owned repo without rendering private repo names.</text>
             </svg>`;
 
             fs.mkdirSync("dist", { recursive: true });
