@@ -71,7 +71,49 @@ I enjoy working on agentic AI systems, LLM orchestration, and distributed backen
 </p>
 
 ---
+## GitHub Analytics
 
+<div align="center">
+
+<img alt="Visesh's GitHub stats" src="https://github-readme-stats.vercel.app/api?username=viseshb&show_icons=true&hide_border=false&count_private=true&include_all_commits=true&bg_color=0D1117&title_color=F6C85F&text_color=E6EDF3&icon_color=2DD4BF&border_color=F6C85F&border_radius=10" width="49%" />
+<img alt="Visesh's GitHub streak" src="https://streak-stats.demolab.com/?user=viseshb&hide_border=false&background=0D1117&border=F6C85F&stroke=2DD4BF&ring=F6C85F&fire=FFB86C&currStreakNum=E6EDF3&sideNums=E6EDF3&currStreakLabel=F6C85F&sideLabels=94A3B8&dates=94A3B8&border_radius=10" width="49%" />
+
+<img alt="Visesh's top languages" src="https://github-readme-stats.vercel.app/api/top-langs/?username=viseshb&layout=compact&hide_border=false&bg_color=0D1117&title_color=F6C85F&text_color=E6EDF3&border_color=F6C85F&border_radius=10" width="49%" />
+<img alt="Visesh's GitHub trophies" src="https://github-profile-trophy.vercel.app/?username=viseshb&theme=onedark&no-frame=true&no-bg=true&row=2&column=3&margin-w=12&margin-h=12" width="49%" />
+
+</div>
+
+<div align="center">
+
+<img alt="Visesh's contribution activity graph" src="https://github-readme-activity-graph.vercel.app/graph?username=viseshb&bg_color=0D1117&color=E6EDF3&line=F6C85F&point=2DD4BF&area=true&area_color=F6C85F&hide_border=true&radius=10" width="100%" />
+
+</div>
+
+<br/>
+
+<div align="center">
+
+### Contribution Snake
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/viseshb/viseshb/output/github-contribution-grid-snake-dark.svg" />
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/viseshb/viseshb/output/github-contribution-grid-snake.svg" />
+  <img alt="Visesh's GitHub contribution snake" src="https://raw.githubusercontent.com/viseshb/viseshb/output/github-contribution-grid-snake.svg" width="100%" />
+</picture>
+
+<sub>Generated automatically from GitHub contributions once the snake workflow publishes the output branch.</sub>
+
+</div>
+
+<br/>
+
+<div align="center">
+
+![Profile Views](https://komarev.com/ghpvc/?username=viseshb&style=for-the-badge&color=D4AF37&label=Profile+Views)
+
+<img alt="Footer wave" src="https://capsule-render.vercel.app/api?type=waving&color=0:0B1020,45:D4AF37,100:2DD4BF&height=100&section=footer" width="100%"/>
+
+</div>
 ## 📫 Connect With Me
 - 💼 [LinkedIn](https://www.linkedin.com/in/viseshb/)
 - 💻 Check out my projects below!
