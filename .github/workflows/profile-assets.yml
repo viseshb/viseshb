@@ -143,9 +143,9 @@ jobs:
             const defaultBranchCommits = publicDefaultBranchCommits + privateDefaultBranchCommits;
             const recentRepos = publicRepos.slice(0, 4);
 
-            // Total Actions workflow runs across every owned repo. This is the
-            // only stat that still needs the REST API; commit/PR/issue counts now
-            // come from GitHub's own contribution data (reliable + consistent).
+            // Repo-wide totals across every owned repo the token can access.
+            // Private repo names are only used in memory for API reads and are
+            // never rendered into generated SVGs.
             async function countWorkflowRuns(repos) {
               let runs = 0;
               for (const repo of repos) {
@@ -169,10 +169,43 @@ jobs:
             ]);
             const actionsWorkflowRuns = publicWorkflowRuns + privateWorkflowRuns;
 
-            // PR / issue / review totals via the search API. The contributions
-            // collection only counts these inside the contribution window and
-            // badly undercounts (e.g. 28 PRs vs 162 actual), so search the real
-            // totals across every repo the token can see (public + private).
+            async function countRepoPullRequestsAndIssues(repos) {
+              const totals = {
+                pullRequests: 0,
+                mergedPullRequests: 0,
+                issues: 0
+              };
+
+              for (const repo of repos) {
+                try {
+                  const pulls = await github.paginate(github.rest.pulls.list, {
+                    owner: login,
+                    repo: repo.name,
+                    state: "all",
+                    per_page: 100
+                  });
+                  totals.pullRequests += pulls.length;
+                  totals.mergedPullRequests += pulls.filter((pull) => Boolean(pull.merged_at)).length;
+                } catch (error) {
+                  core.warning(`Could not count pull requests for one repository: ${error.message}`);
+                }
+
+                try {
+                  const issues = await github.paginate(github.rest.issues.listForRepo, {
+                    owner: login,
+                    repo: repo.name,
+                    state: "all",
+                    per_page: 100
+                  });
+                  totals.issues += issues.filter((issue) => !issue.pull_request).length;
+                } catch (error) {
+                  core.warning(`Could not count issues for one repository: ${error.message}`);
+                }
+              }
+
+              return totals;
+            }
+
             async function searchCount(q) {
               try {
                 const res = await github.rest.search.issuesAndPullRequests({ q, per_page: 1 });
@@ -183,13 +216,15 @@ jobs:
               }
             }
 
-            const [pullRequestsAuthored, pullRequestsMerged, issuesAuthored, reviewsGiven] =
+            const [publicRepoActivity, privateRepoActivity, reviewsGiven] =
               await Promise.all([
-                searchCount(`is:pr author:${login}`),
-                searchCount(`is:pr author:${login} is:merged`),
-                searchCount(`is:issue author:${login}`),
+                countRepoPullRequestsAndIssues(publicRepos),
+                countRepoPullRequestsAndIssues(privateRepos),
                 searchCount(`is:pr reviewed-by:${login}`)
               ]);
+            const repoPullRequests = publicRepoActivity.pullRequests + privateRepoActivity.pullRequests;
+            const repoMergedPullRequests = publicRepoActivity.mergedPullRequests + privateRepoActivity.mergedPullRequests;
+            const repoIssues = publicRepoActivity.issues + privateRepoActivity.issues;
 
             // Calendar-year contribution totals straight from GitHub's own
             // contribution calendar (the same numbers shown on the profile).
@@ -340,12 +375,12 @@ jobs:
               ${statCard(56, 250, "Total Commits", defaultBranchCommits, "#F6C85F")}
               ${statCard(246, 250, "Public Commits", publicDefaultBranchCommits, "#2DD4BF")}
               ${statCard(436, 250, "Private Commits", privateDefaultBranchCommits, "#8B5CF6")}
-              ${statCard(626, 250, "Pull Requests", pullRequestsAuthored, "#F6C85F")}
+              ${statCard(626, 250, "Repo PRs", repoPullRequests, "#F6C85F")}
 
-              ${statCard(56, 348, "PRs Merged", pullRequestsMerged, "#8B5CF6")}
+              ${statCard(56, 348, "Repo PRs Merged", repoMergedPullRequests, "#8B5CF6")}
               ${statCard(246, 348, "Code Reviews", reviewsGiven, "#2DD4BF")}
               ${statCard(436, 348, "Actions Runs", actionsWorkflowRuns, "#F6C85F")}
-              ${statCard(626, 348, "Issues Opened", issuesAuthored, "#2DD4BF")}
+              ${statCard(626, 348, "Repo Issues", repoIssues, "#2DD4BF")}
 
               ${statCard(56, 446, "Followers", user.followers.totalCount, "#2DD4BF")}
               ${statCard(246, 446, "Following", user.following.totalCount, "#8B5CF6")}
@@ -363,7 +398,7 @@ jobs:
               </g>
 
               <text x="56" y="758" fill="#64748B" font-size="12">Dynamic profile years: ${escapeXml(contributionYearLabel)}. Private repo names are never shown.</text>
-              <text x="56" y="776" fill="#64748B" font-size="12">Commit, PR, issue, and contribution totals come from GitHub's own data across public and private repos, without rendering private repo names.</text>
+              <text x="56" y="776" fill="#64748B" font-size="12">Commit, PR, issue, and contribution totals come from GitHub's data across owned public and private repos, without rendering private repo names.</text>
             </svg>`;
 
             fs.mkdirSync("dist", { recursive: true });
