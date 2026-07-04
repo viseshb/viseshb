@@ -2,11 +2,18 @@ name: Generate profile assets
 
 on:
   schedule:
-    - cron: "0 0 * * *"
+    # Hourly, at an off-peak minute. Top-of-hour crons (minute 0) land in
+    # GitHub's highest-congestion window and regularly start hours late,
+    # which is what made the stats look permanently stale.
+    - cron: "23 * * * *"
   workflow_dispatch:
 
 permissions:
   contents: write
+
+concurrency:
+  group: profile-assets
+  cancel-in-progress: true
 
 jobs:
   generate:
@@ -61,14 +68,19 @@ jobs:
               { login }
             );
 
+            // No isFork filter: repo counts must match the numbers GitHub's own
+            // profile shows, which include forks. Forks are excluded later from
+            // commit/star/language stats so upstream history is never counted.
+            // Commit history is intentionally NOT author-filtered: the cards
+            // must match the commit count shown on each repo page, which
+            // includes bot commits and commits from unlinked author emails.
             const repoQuery = `
-              query($login: String!, $authorId: ID!, $privacy: RepositoryPrivacy!, $cursor: String) {
+              query($login: String!, $privacy: RepositoryPrivacy!, $cursor: String) {
                 user(login: $login) {
                   repositories(
                     first: 100,
                     after: $cursor,
                     ownerAffiliations: OWNER,
-                    isFork: false,
                     privacy: $privacy,
                     orderBy: { field: UPDATED_AT, direction: DESC }
                   ) {
@@ -80,6 +92,7 @@ jobs:
                     nodes {
                       name
                       url
+                      isFork
                       stargazerCount
                       forkCount
                       updatedAt
@@ -90,7 +103,7 @@ jobs:
                       defaultBranchRef {
                         target {
                           ... on Commit {
-                            history(author: { id: $authorId }) {
+                            history {
                               totalCount
                             }
                           }
@@ -110,7 +123,6 @@ jobs:
               do {
                 const page = await github.graphql(repoQuery, {
                   login,
-                  authorId: identity.user.id,
                   privacy,
                   cursor
                 });
@@ -130,8 +142,10 @@ jobs:
               fetchRepos("PRIVATE")
             ]);
 
-            const publicRepos = publicResult.repos;
-            const privateRepos = privateResult.repos;
+            // Repo count cards include forks (matches the profile page);
+            // every other stat works on non-fork repos only.
+            const publicRepos = publicResult.repos.filter((repo) => !repo.isFork);
+            const privateRepos = privateResult.repos.filter((repo) => !repo.isFork);
             const publicRepoCount = publicResult.totalCount;
             const privateRepoCount = privateResult.totalCount;
             const totalRepoCount = publicRepoCount + privateRepoCount;
@@ -208,7 +222,7 @@ jobs:
 
             async function searchCount(q) {
               try {
-                const res = await github.rest.search.issuesAndPullRequests({ q, per_page: 1 });
+                const res = await github.rest.search.issuesAndPullRequests({ q, per_page: 1, advanced_search: true });
                 return res.data.total_count || 0;
               } catch (error) {
                 core.warning(`Could not run search "${q}": ${error.message}`);
@@ -301,9 +315,13 @@ jobs:
               languageMap.set(repo.primaryLanguage.name, current);
             }
 
-            const languages = [...languageMap.values()]
-              .sort((a, b) => b.count - a.count)
-              .slice(0, 6);
+            // Percentages are shares of ALL primary languages, not of the
+            // displayed top six, so the bars reflect the real distribution.
+            // Name tie-break keeps the ordering deterministic between runs.
+            const allLanguages = [...languageMap.values()]
+              .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+            const languageTotal = allLanguages.reduce((sum, item) => sum + item.count, 0) || 1;
+            const languages = allLanguages.slice(0, 6);
 
             const escapeXml = (value) => String(value ?? "")
               .replace(/&/g, "&amp;")
@@ -332,8 +350,7 @@ jobs:
             }).join("");
 
             const languageRows = languages.map((language, index) => {
-              const total = languages.reduce((sum, item) => sum + item.count, 0) || 1;
-              const percent = Math.round((language.count / total) * 100);
+              const percent = Math.round((language.count / languageTotal) * 100);
               const y = 370 + index * 31;
               return `
                 <g>
@@ -516,11 +533,15 @@ jobs:
           ref: main
           path: profile-main
           token: ${{ secrets.PROFILE_TOKEN }}
+          # Depth 2 so the previous bump commit can be dropped and replaced,
+          # keeping main at a single cache-bump commit instead of one per run.
+          fetch-depth: 2
 
       - name: Bump README asset cache keys
         working-directory: profile-main
         run: |
-          node - <<'NODE'
+          bump_readme() {
+            node - <<'NODE'
           const fs = require("fs");
           const path = "README.md";
           const cacheKey = `v=${process.env.GITHUB_RUN_ID}`;
@@ -534,9 +555,34 @@ jobs:
             fs.writeFileSync(path, after);
           }
           NODE
+          }
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Replace the previous bump commit instead of stacking a new one per
+          # run. If the force-with-lease push loses a race with a real commit
+          # to main, fall back to a plain commit on top of the fresh head.
+          if [ "$(git log -1 --pretty=%s)" = "Bump profile asset cache" ] && [ "$(git rev-list --count HEAD)" -gt 1 ]; then
+            git reset --hard HEAD~1
+          fi
+
+          bump_readme
+          git add README.md
+          if git diff --cached --quiet; then
+            echo "README cache keys are already current."
+            exit 0
+          fi
+          git commit -m "Bump profile asset cache"
+
+          if git push --force-with-lease origin HEAD:main; then
+            exit 0
+          fi
+
+          echo "Force push lost a race with main; retrying on the fresh head."
+          git fetch origin main
+          git reset --hard origin/main
+          bump_readme
           git add README.md
           if git diff --cached --quiet; then
             echo "README cache keys are already current."
