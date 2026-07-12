@@ -77,15 +77,15 @@ I enjoy working on agentic AI systems, LLM orchestration, and distributed backen
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/viseshb/viseshb/output/github-metrics.svg?v=29189661756" />
-  <img alt="Visesh's live public and private GitHub metrics without private repository names" src="https://raw.githubusercontent.com/viseshb/viseshb/output/github-metrics.svg?v=29189661756" width="100%" />
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/viseshb/viseshb/output/github-metrics.svg?v=29192102653" />
+  <img alt="Visesh's live public and private GitHub metrics without private repository names" src="https://raw.githubusercontent.com/viseshb/viseshb/output/github-metrics.svg?v=29192102653" width="100%" />
 </picture>
 
 </div>
 
 <div align="center">
 
-<img alt="Visesh's full contribution history graph" src="https://raw.githubusercontent.com/viseshb/viseshb/output/github-contribution-graph.svg?v=29189661756" width="100%" />
+<img alt="Visesh's full contribution history graph" src="https://raw.githubusercontent.com/viseshb/viseshb/output/github-contribution-graph.svg?v=29192102653" width="100%" />
 
 </div>
 
@@ -96,9 +96,9 @@ I enjoy working on agentic AI systems, LLM orchestration, and distributed backen
 ### Contribution Snake
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/viseshb/viseshb/output/github-contribution-grid-snake-dark.svg?v=29189661756" />
-  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/viseshb/viseshb/output/github-contribution-grid-snake.svg?v=29189661756" />
-  <img alt="Visesh's GitHub contribution snake" src="https://raw.githubusercontent.com/viseshb/viseshb/output/github-contribution-grid-snake.svg?v=29189661756" width="100%" />
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/viseshb/viseshb/output/github-contribution-grid-snake-dark.svg?v=29192102653" />
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/viseshb/viseshb/output/github-contribution-grid-snake.svg?v=29192102653" />
+  <img alt="Visesh's GitHub contribution snake" src="https://raw.githubusercontent.com/viseshb/viseshb/output/github-contribution-grid-snake.svg?v=29192102653" width="100%" />
 </picture>
 
 </div>
